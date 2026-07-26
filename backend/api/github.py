@@ -6,13 +6,14 @@ Thin HTTP wrapper only — no business logic here.
 from fastapi import APIRouter, HTTPException
 
 from api.schemas import FeedbackRequest, FeedbackResponse, RepoSummary
+from services.analyzer.code_quality import collect_code_samples
 from services.github.github_api import (
     fetch_readme_content,
     fetch_repository_info,
     fetch_user_repos,
     GitHubServiceError,
 )
-from services.llm.anthropic_client import call_claude_json, LLMServiceError
+from services.llm.gemini_client import call_gemini_json, LLMServiceError
 from services.llm.prompts import (
     build_repository_reviewer_prompt,
     REPOSITORY_REVIEWER_SYSTEM_PROMPT,
@@ -37,15 +38,16 @@ async def list_user_repos(username: str) -> list[RepoSummary]:
 @router.post("/feedback", response_model=FeedbackResponse)
 async def get_repository_feedback(payload: FeedbackRequest) -> FeedbackResponse:
     """
-    Fetches a repo's real metadata + README, then asks Claude to proactively
-    review it (Prompt 4: Repository Reviewer). Raw stats are always included
-    in the response; AI feedback happens regardless of whether the user asks
-    for it, per the product's "parse everything" behavior.
+    Fetches a repo's real metadata + README + representative source code
+    samples, then asks Gemini to proactively review it (Prompt 4: Repository
+    Reviewer). Raw stats are always included; AI feedback happens regardless
+    of whether the user explicitly asks for it.
     """
     try:
         owner, repo = parse_github_url(payload.repo_url)
         repo_info = await fetch_repository_info(payload.repo_url)
         readme_content = await fetch_readme_content(owner, repo)
+        code_samples = await collect_code_samples(owner, repo, repo_info.default_branch)
 
         user_prompt = build_repository_reviewer_prompt(
             repo_name=repo_info.repo_name,
@@ -57,9 +59,12 @@ async def get_repository_feedback(payload: FeedbackRequest) -> FeedbackResponse:
             forks=repo_info.forks,
             has_readme=repo_info.has_readme,
             readme_content=readme_content,
+            code_samples_text=code_samples["combined_code_text"],
+            files_reviewed=code_samples["files_reviewed"],
+            total_source_files_found=code_samples["total_source_files_found"],
         )
 
-        ai_result = call_claude_json(REPOSITORY_REVIEWER_SYSTEM_PROMPT, user_prompt)
+        ai_result = call_gemini_json(REPOSITORY_REVIEWER_SYSTEM_PROMPT, user_prompt)
 
         return FeedbackResponse(
             repo_purpose=ai_result.get("repo_purpose", ""),
@@ -67,6 +72,8 @@ async def get_repository_feedback(payload: FeedbackRequest) -> FeedbackResponse:
             documentation_quality=ai_result.get("documentation_quality", ""),
             suggested_improvements=ai_result.get("suggested_improvements", []),
             missing_evidence_notes=ai_result.get("missing_evidence_notes", []),
+            files_reviewed=code_samples["files_reviewed"],
+            total_source_files_found=code_samples["total_source_files_found"],
             raw_stats=repo_info,
         )
 

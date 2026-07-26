@@ -1,7 +1,5 @@
 """
-Pydantic schemas for GitHub repository + AI feedback endpoints.
-
-No AI logic lives here — only data shapes.
+Pydantic schemas for GitHub repository, AI feedback, and career analysis endpoints.
 """
 
 from typing import Optional
@@ -91,7 +89,34 @@ class FeedbackResponse(BaseModel):
     documentation_quality: str
     suggested_improvements: list[str] = Field(default_factory=list)
     missing_evidence_notes: list[str] = Field(default_factory=list)
+    files_reviewed: list[str] = Field(default_factory=list)
+    total_source_files_found: int = 0
     raw_stats: RepoResponse
+
+
+class CareerAnalysisRequest(BaseModel):
+    """Incoming request body for whole-profile career analysis (Prompt 1)."""
+
+    username: str = Field(..., description="GitHub username to analyze")
+    career_goal: str = Field(..., description="e.g. 'Backend Engineer', 'ML Engineer'")
+
+    @field_validator("username", "career_goal")
+    @classmethod
+    def not_empty(cls, v: str) -> str:
+        if not v or not v.strip():
+            raise ValueError("Field must not be empty")
+        return v.strip()
+
+
+class CareerAnalysisResponse(BaseModel):
+    """AI-generated career guidance based on a user's full GitHub profile."""
+
+    strengths: list[str] = Field(default_factory=list)
+    weaknesses: list[str] = Field(default_factory=list)
+    missing_skills: list[str] = Field(default_factory=list)
+    career_readiness: str
+    overall_summary: str
+    repos_analyzed: int
 
 
 class ErrorResponse(BaseModel):

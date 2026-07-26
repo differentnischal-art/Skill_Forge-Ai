@@ -204,9 +204,67 @@ async def fetch_readme_content(owner: str, repo: str) -> Optional[str]:
         except Exception:
             return None
 
-        # Cap length so we never send an oversized README straight into the prompt.
         max_chars = 6000
         if len(decoded) > max_chars:
             decoded = decoded[:max_chars] + "\n\n...[README truncated for length]..."
 
         return decoded
+
+
+async def fetch_repo_file_tree(owner: str, repo: str, branch: str) -> list[dict]:
+    """
+    Fetch the full file tree of a repo via the Git Trees API.
+    Returns a list of {"path": ..., "type": "blob"|"tree", "size": ...} dicts.
+    Returns an empty list (not an error) if the repo is empty or the tree
+    can't be read — an empty repo is meaningful evidence, not a failure.
+    """
+    headers = _auth_headers()
+
+    async with httpx.AsyncClient(timeout=10.0, follow_redirects=True) as client:
+        resp = await client.get(
+            f"{GITHUB_API_BASE}/repos/{owner}/{repo}/git/trees/{branch}",
+            headers=headers,
+            params={"recursive": "1"},
+        )
+
+        if resp.status_code != 200:
+            return []
+
+        data = resp.json()
+        return data.get("tree", [])
+
+
+async def fetch_file_content(owner: str, repo: str, path: str, branch: str) -> Optional[str]:
+    """
+    Fetch and decode a single file's raw text content via the Contents API.
+    Returns None on any failure (binary file, too large, deleted, etc.) —
+    callers should skip files that return None rather than treat it as fatal.
+    """
+    headers = _auth_headers()
+
+    async with httpx.AsyncClient(timeout=10.0, follow_redirects=True) as client:
+        try:
+            resp = await client.get(
+                f"{GITHUB_API_BASE}/repos/{owner}/{repo}/contents/{path}",
+                headers=headers,
+                params={"ref": branch},
+            )
+        except httpx.HTTPError:
+            return None
+
+        if resp.status_code != 200:
+            return None
+
+        data = resp.json()
+
+        if isinstance(data, list):
+            return None  # path was a directory, not a file
+
+        content_b64 = data.get("content", "")
+        if not content_b64:
+            return None
+
+        try:
+            return base64.b64decode(content_b64).decode("utf-8", errors="replace")
+        except Exception:
+            return None

@@ -1,16 +1,16 @@
 """
-CareerOS Backend — Milestone 1 + Repo List
+CareerOS Backend
 Entry point: wires up FastAPI app, CORS, and all routers.
 
 Run locally:
     uvicorn main:app --reload --port 8000
-
-Deploy:
-    - Railway / Render: use this file directly (uvicorn main:app --host 0.0.0.0 --port $PORT)
-    - Vercel: see vercel.json in this same folder
 """
 
 import os
+
+from dotenv import load_dotenv
+
+load_dotenv()  # Must run before any os.getenv() calls anywhere in the app
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
