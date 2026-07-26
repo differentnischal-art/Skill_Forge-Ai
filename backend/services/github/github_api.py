@@ -6,12 +6,13 @@ per system_design.md this layer's only job is to normalize GitHub data
 into a clean shape. Feature extraction / prompt-building comes later.
 """
 
+import base64
 import os
 from typing import Optional
 
 import httpx
 
-from models.schemas import RepoResponse
+from api.schemas import RepoResponse, RepoSummary
 from utils.helpers import parse_github_url
 
 GITHUB_API_BASE = "https://api.github.com"
@@ -41,13 +42,13 @@ def _auth_headers() -> dict[str, str]:
 
 async def fetch_repository_info(repo_url: str) -> RepoResponse:
     """
-    Fetch repository metadata + language breakdown from GitHub and
-    return it as a validated RepoResponse.
+    Fetch full repository metadata + language breakdown from GitHub for a
+    single repo and return it as a validated RepoResponse.
     """
     owner, repo = parse_github_url(repo_url)
     headers = _auth_headers()
 
-    async with httpx.AsyncClient(timeout=10.0) as client:
+    async with httpx.AsyncClient(timeout=10.0, follow_redirects=True) as client:
         repo_resp = await client.get(
             f"{GITHUB_API_BASE}/repos/{owner}/{repo}", headers=headers
         )
@@ -70,7 +71,6 @@ async def fetch_repository_info(repo_url: str) -> RepoResponse:
 
         repo_data = repo_resp.json()
 
-        # Language breakdown (bytes of code per language) — best-effort, non-fatal.
         languages: dict[str, int] = {}
         try:
             lang_resp = await client.get(
@@ -81,7 +81,6 @@ async def fetch_repository_info(repo_url: str) -> RepoResponse:
         except httpx.HTTPError:
             languages = {}
 
-        # README presence check — best-effort, non-fatal.
         has_readme = False
         try:
             readme_resp = await client.get(
@@ -118,3 +117,96 @@ async def fetch_repository_info(repo_url: str) -> RepoResponse:
         pushed_at=repo_data.get("pushed_at"),
         has_readme=has_readme,
     )
+
+
+async def fetch_user_repos(username: str) -> list[RepoSummary]:
+    """
+    Fetch all public repos for a GitHub user (paginated, 100 per page).
+    Powers the "list all repos after login" screen.
+    """
+    headers = _auth_headers()
+    all_repos: list[RepoSummary] = []
+    page = 1
+
+    async with httpx.AsyncClient(timeout=10.0, follow_redirects=True) as client:
+        while True:
+            resp = await client.get(
+                f"{GITHUB_API_BASE}/users/{username}/repos",
+                headers=headers,
+                params={"per_page": 100, "page": page, "sort": "updated"},
+            )
+
+            if resp.status_code == 404:
+                raise GitHubServiceError(
+                    f"GitHub user '{username}' not found.", status_code=404
+                )
+            if resp.status_code == 403:
+                raise GitHubServiceError(
+                    "GitHub API rate limit exceeded. Add a GITHUB_TOKEN to increase limits.",
+                    status_code=429,
+                )
+            if resp.status_code != 200:
+                raise GitHubServiceError(
+                    f"GitHub API returned an unexpected error ({resp.status_code}).",
+                    status_code=502,
+                )
+
+            batch = resp.json()
+            if not batch:
+                break
+
+            for r in batch:
+                all_repos.append(
+                    RepoSummary(
+                        repo_name=r["name"],
+                        full_name=r["full_name"],
+                        description=r.get("description"),
+                        url=r["html_url"],
+                        primary_language=r.get("language"),
+                        stars=r.get("stargazers_count", 0),
+                        forks=r.get("forks_count", 0),
+                        updated_at=r.get("updated_at"),
+                    )
+                )
+
+            page += 1
+
+    return all_repos
+
+
+async def fetch_readme_content(owner: str, repo: str) -> Optional[str]:
+    """
+    Fetch and decode the raw README text for a repo, if one exists.
+    Returns None if there's no README (never raises for this case —
+    a missing README is meaningful evidence, not an error).
+    """
+    headers = _auth_headers()
+
+    async with httpx.AsyncClient(timeout=10.0, follow_redirects=True) as client:
+        resp = await client.get(
+            f"{GITHUB_API_BASE}/repos/{owner}/{repo}/readme", headers=headers
+        )
+
+        if resp.status_code == 404:
+            return None
+        if resp.status_code != 200:
+            raise GitHubServiceError(
+                f"Could not fetch README ({resp.status_code}).", status_code=502
+            )
+
+        data = resp.json()
+        content_b64 = data.get("content", "")
+        if not content_b64:
+            return None
+
+        try:
+            decoded = base64.b64decode(content_b64).decode("utf-8", errors="replace")
+        except Exception:
+            return None
+
+        # Cap length so we never send an oversized README straight into the prompt.
+        max_chars = 6000
+        if len(decoded) > max_chars:
+            decoded = decoded[:max_chars] + "\n\n...[README truncated for length]..."
+
+        return decoded

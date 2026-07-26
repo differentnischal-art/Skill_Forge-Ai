@@ -1,13 +1,13 @@
 """
-CareerOS Backend — Milestone 1
-Entry point: wires up FastAPI app, CORS, and the /api/analyze router.
+CareerOS Backend — Milestone 1 + Repo List
+Entry point: wires up FastAPI app, CORS, and all routers.
 
 Run locally:
     uvicorn main:app --reload --port 8000
 
 Deploy:
     - Railway / Render: use this file directly (uvicorn main:app --host 0.0.0.0 --port $PORT)
-    - Vercel: handled via /api/index.py which imports `app` from here (see vercel.json)
+    - Vercel: see vercel.json in this same folder
 """
 
 import os
@@ -16,11 +16,12 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from api.analyze import router as analyze_router
+from api.github import router as github_router
 
 app = FastAPI(
     title="CareerOS Backend",
-    description="Milestone 1: GitHub repository URL -> structured repository JSON.",
-    version="0.1.0",
+    description="GitHub repository/profile analysis backend.",
+    version="0.2.0",
 )
 
 _origins_env = os.getenv("ALLOWED_ORIGINS", "*")
@@ -37,11 +38,12 @@ app.add_middleware(
 )
 
 app.include_router(analyze_router)
+app.include_router(github_router)
 
 
 @app.get("/", tags=["health"])
 async def root():
-    return {"status": "ok", "service": "careeros-backend", "milestone": 1}
+    return {"status": "ok", "service": "careeros-backend"}
 
 
 @app.get("/health", tags=["health"])
