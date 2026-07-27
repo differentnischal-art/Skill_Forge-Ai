@@ -11,8 +11,7 @@ import os
 from dotenv import load_dotenv
 
 load_dotenv() 
-
-print("DEBUG - DATABASE_URL is:", os.getenv("DATABASE_URL")) # Must run before any os.getenv() calls anywhere in the app
+# Must run before any os.getenv() calls anywhere in the app
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
