@@ -2,7 +2,8 @@
 API layer — thin HTTP wrapper. No business logic lives here.
 """
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy.orm import Session
 
 from api.schemas import (
     CareerAnalysisRequest,
@@ -10,6 +11,8 @@ from api.schemas import (
     RepoAnalyzeRequest,
     RepoResponse,
 )
+from databases import crud
+from databases.connection import get_db
 from services.analyzer.profile_analyzer import (
     build_profile_summary,
     build_repositories_block,
@@ -41,11 +44,13 @@ async def analyze_repository(payload: RepoAnalyzeRequest) -> RepoResponse:
 
 
 @router.post("/career-analysis", response_model=CareerAnalysisResponse)
-async def career_analysis(payload: CareerAnalysisRequest) -> CareerAnalysisResponse:
+async def career_analysis(
+    payload: CareerAnalysisRequest, db: Session = Depends(get_db)
+) -> CareerAnalysisResponse:
     """
     Whole-profile career guidance (Prompt 1). Fetches all repos for a user,
-    builds a curated summary (never raw JSON), and asks the LLM for
-    strengths/weaknesses/missing_skills relative to the stated career goal.
+    builds a curated summary (never raw JSON), asks the LLM, and saves the
+    result so it's not lost between requests.
     """
     try:
         repos = await fetch_user_repos(payload.username)
@@ -63,12 +68,30 @@ async def career_analysis(payload: CareerAnalysisRequest) -> CareerAnalysisRespo
 
         ai_result = call_gemini_json(CAREER_ANALYSIS_SYSTEM_PROMPT, user_prompt)
 
+        strengths = ai_result.get("strengths", [])
+        weaknesses = ai_result.get("weaknesses", [])
+        missing_skills = ai_result.get("missing_skills", [])
+        career_readiness = ai_result.get("career_readiness", "")
+        overall_summary = ai_result.get("overall_summary", "")
+
+        crud.save_career_analysis(
+            db=db,
+            username=payload.username,
+            career_goal=payload.career_goal,
+            strengths=strengths,
+            weaknesses=weaknesses,
+            missing_skills=missing_skills,
+            career_readiness=career_readiness,
+            overall_summary=overall_summary,
+            repos_analyzed=len(repos),
+        )
+
         return CareerAnalysisResponse(
-            strengths=ai_result.get("strengths", []),
-            weaknesses=ai_result.get("weaknesses", []),
-            missing_skills=ai_result.get("missing_skills", []),
-            career_readiness=ai_result.get("career_readiness", ""),
-            overall_summary=ai_result.get("overall_summary", ""),
+            strengths=strengths,
+            weaknesses=weaknesses,
+            missing_skills=missing_skills,
+            career_readiness=career_readiness,
+            overall_summary=overall_summary,
             repos_analyzed=len(repos),
         )
 

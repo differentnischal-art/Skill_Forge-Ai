@@ -3,9 +3,12 @@ API layer for GitHub user/profile-level endpoints and AI repository feedback.
 Thin HTTP wrapper only — no business logic here.
 """
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy.orm import Session
 
 from api.schemas import FeedbackRequest, FeedbackResponse, RepoSummary
+from databases import crud
+from databases.connection import get_db
 from services.analyzer.code_quality import collect_code_samples
 from services.github.github_api import (
     fetch_readme_content,
@@ -36,12 +39,12 @@ async def list_user_repos(username: str) -> list[RepoSummary]:
 
 
 @router.post("/feedback", response_model=FeedbackResponse)
-async def get_repository_feedback(payload: FeedbackRequest) -> FeedbackResponse:
+async def get_repository_feedback(
+    payload: FeedbackRequest, db: Session = Depends(get_db)
+) -> FeedbackResponse:
     """
-    Fetches a repo's real metadata + README + representative source code
-    samples, then asks Gemini to proactively review it (Prompt 4: Repository
-    Reviewer). Raw stats are always included; AI feedback happens regardless
-    of whether the user explicitly asks for it.
+    Fetches a repo's real metadata + README + source code samples, asks
+    Gemini to review it, and saves the result so it's not lost between requests.
     """
     try:
         owner, repo = parse_github_url(payload.repo_url)
@@ -66,12 +69,31 @@ async def get_repository_feedback(payload: FeedbackRequest) -> FeedbackResponse:
 
         ai_result = call_gemini_json(REPOSITORY_REVIEWER_SYSTEM_PROMPT, user_prompt)
 
+        repo_purpose = ai_result.get("repo_purpose", "")
+        code_quality_estimate = ai_result.get("code_quality_estimate", "")
+        documentation_quality = ai_result.get("documentation_quality", "")
+        suggested_improvements = ai_result.get("suggested_improvements", [])
+        missing_evidence_notes = ai_result.get("missing_evidence_notes", [])
+
+        crud.save_repo_feedback(
+            db=db,
+            repo_url=payload.repo_url,
+            repo_full_name=repo_info.full_name,
+            repo_purpose=repo_purpose,
+            code_quality_estimate=code_quality_estimate,
+            documentation_quality=documentation_quality,
+            suggested_improvements=suggested_improvements,
+            missing_evidence_notes=missing_evidence_notes,
+            files_reviewed=code_samples["files_reviewed"],
+            total_source_files_found=code_samples["total_source_files_found"],
+        )
+
         return FeedbackResponse(
-            repo_purpose=ai_result.get("repo_purpose", ""),
-            code_quality_estimate=ai_result.get("code_quality_estimate", ""),
-            documentation_quality=ai_result.get("documentation_quality", ""),
-            suggested_improvements=ai_result.get("suggested_improvements", []),
-            missing_evidence_notes=ai_result.get("missing_evidence_notes", []),
+            repo_purpose=repo_purpose,
+            code_quality_estimate=code_quality_estimate,
+            documentation_quality=documentation_quality,
+            suggested_improvements=suggested_improvements,
+            missing_evidence_notes=missing_evidence_notes,
             files_reviewed=code_samples["files_reviewed"],
             total_source_files_found=code_samples["total_source_files_found"],
             raw_stats=repo_info,
