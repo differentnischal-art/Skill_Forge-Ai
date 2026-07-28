@@ -1,7 +1,6 @@
 """
 SQLAlchemy ORM models.
-Matches the table design in System_design.md §7, scoped to what's
-actually implemented so far: career analyses and per-repo feedback.
+Matches the table design in System_design.md §7.
 """
 
 from datetime import datetime, timezone
@@ -9,6 +8,21 @@ from datetime import datetime, timezone
 from sqlalchemy import JSON, Column, DateTime, Integer, String, Text
 
 from databases.connection import Base
+
+
+class User(Base):
+    """A logged-in user, created/updated on each GitHub OAuth login."""
+
+    __tablename__ = "users"
+
+    id = Column(Integer, primary_key=True, index=True)
+    github_id = Column(Integer, unique=True, index=True, nullable=False)
+    username = Column(String, index=True, nullable=False)
+    avatar_url = Column(String, nullable=True)
+    bio = Column(Text, nullable=True)
+    career_goal = Column(String, nullable=True)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    last_login_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
 
 
 class CareerAnalysis(Base):

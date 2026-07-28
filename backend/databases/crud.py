@@ -4,9 +4,51 @@ Kept separate from the API layer per ADR-006 (modular monolith) —
 routes call these functions, never touch the DB session directly.
 """
 
+from datetime import datetime, timezone
+
 from sqlalchemy.orm import Session
 
-from databases.model import CareerAnalysis, RepoFeedback
+from databases.model import CareerAnalysis, RepoFeedback, User
+
+
+def get_user_by_github_id(db: Session, github_id: int) -> User | None:
+    return db.query(User).filter(User.github_id == github_id).first()
+
+
+def get_user_by_id(db: Session, user_id: int) -> User | None:
+    return db.query(User).filter(User.id == user_id).first()
+
+
+def create_or_update_user(
+    db: Session,
+    github_id: int,
+    username: str,
+    avatar_url: str | None,
+    bio: str | None,
+) -> User:
+    """
+    Creates a new user on first login, or updates profile fields
+    (username may change, avatar may change) on subsequent logins.
+    """
+    user = get_user_by_github_id(db, github_id)
+
+    if user:
+        user.username = username
+        user.avatar_url = avatar_url
+        user.bio = bio
+        user.last_login_at = datetime.now(timezone.utc)
+    else:
+        user = User(
+            github_id=github_id,
+            username=username,
+            avatar_url=avatar_url,
+            bio=bio,
+        )
+        db.add(user)
+
+    db.commit()
+    db.refresh(user)
+    return user
 
 
 def save_career_analysis(

@@ -16,6 +16,7 @@ from api.schemas import RepoResponse, RepoSummary
 from utils.helpers import parse_github_url
 
 GITHUB_API_BASE = "https://api.github.com"
+GITHUB_OAUTH_BASE = "https://github.com/login/oauth"
 
 
 class GitHubServiceError(Exception):
@@ -27,17 +28,83 @@ class GitHubServiceError(Exception):
         self.status_code = status_code
 
 
-def _auth_headers() -> dict[str, str]:
-    """Build request headers, attaching a GITHUB_TOKEN if available to raise rate limits."""
+def _auth_headers(user_token: Optional[str] = None) -> dict[str, str]:
+    """
+    Build request headers. Uses a user's OAuth token if provided (for
+    authenticated user-specific calls), otherwise falls back to the
+    app-level GITHUB_TOKEN (for general public data fetching).
+    """
     headers = {
         "Accept": "application/vnd.github+json",
         "X-GitHub-Api-Version": "2022-11-28",
-        "User-Agent": "CareerOS-Backend",
+        "User-Agent": "SkillForge-Backend",
     }
-    token: Optional[str] = os.getenv("GITHUB_TOKEN")
+    token = user_token or os.getenv("GITHUB_TOKEN")
     if token:
         headers["Authorization"] = f"Bearer {token}"
     return headers
+
+
+async def exchange_code_for_token(code: str) -> str:
+    """
+    Exchanges a GitHub OAuth 'code' (from the callback redirect) for a
+    real user access token.
+    """
+    client_id = os.getenv("GITHUB_CLIENT_ID")
+    client_secret = os.getenv("GITHUB_CLIENT_SECRET")
+
+    if not client_id or not client_secret:
+        raise GitHubServiceError(
+            "GITHUB_CLIENT_ID/GITHUB_CLIENT_SECRET not set in environment.",
+            status_code=500,
+        )
+
+    async with httpx.AsyncClient(timeout=10.0) as client:
+        resp = await client.post(
+            f"{GITHUB_OAUTH_BASE}/access_token",
+            headers={"Accept": "application/json"},
+            data={
+                "client_id": client_id,
+                "client_secret": client_secret,
+                "code": code,
+            },
+        )
+
+        if resp.status_code != 200:
+            raise GitHubServiceError(
+                f"GitHub OAuth token exchange failed ({resp.status_code}).",
+                status_code=502,
+            )
+
+        data = resp.json()
+        access_token = data.get("access_token")
+
+        if not access_token:
+            error_desc = data.get("error_description", "Unknown OAuth error.")
+            raise GitHubServiceError(
+                f"GitHub OAuth error: {error_desc}", status_code=401
+            )
+
+        return access_token
+
+
+async def fetch_authenticated_github_user(user_access_token: str) -> dict:
+    """
+    Fetches the logged-in user's own GitHub profile using their OAuth token.
+    Returns raw GitHub user JSON (id, login, avatar_url, bio, etc.).
+    """
+    headers = _auth_headers(user_token=user_access_token)
+
+    async with httpx.AsyncClient(timeout=10.0, follow_redirects=True) as client:
+        resp = await client.get(f"{GITHUB_API_BASE}/user", headers=headers)
+
+        if resp.status_code != 200:
+            raise GitHubServiceError(
+                f"Could not fetch authenticated GitHub user ({resp.status_code}).",
+                status_code=502,
+            )
+
+        return resp.json()
 
 
 async def fetch_repository_info(repo_url: str) -> RepoResponse:
@@ -122,7 +189,6 @@ async def fetch_repository_info(repo_url: str) -> RepoResponse:
 async def fetch_user_repos(username: str) -> list[RepoSummary]:
     """
     Fetch all public repos for a GitHub user (paginated, 100 per page).
-    Powers the "list all repos after login" screen.
     """
     headers = _auth_headers()
     all_repos: list[RepoSummary] = []
@@ -177,8 +243,6 @@ async def fetch_user_repos(username: str) -> list[RepoSummary]:
 async def fetch_readme_content(owner: str, repo: str) -> Optional[str]:
     """
     Fetch and decode the raw README text for a repo, if one exists.
-    Returns None if there's no README (never raises for this case —
-    a missing README is meaningful evidence, not an error).
     """
     headers = _auth_headers()
 
@@ -212,12 +276,7 @@ async def fetch_readme_content(owner: str, repo: str) -> Optional[str]:
 
 
 async def fetch_repo_file_tree(owner: str, repo: str, branch: str) -> list[dict]:
-    """
-    Fetch the full file tree of a repo via the Git Trees API.
-    Returns a list of {"path": ..., "type": "blob"|"tree", "size": ...} dicts.
-    Returns an empty list (not an error) if the repo is empty or the tree
-    can't be read — an empty repo is meaningful evidence, not a failure.
-    """
+    """Fetch the full file tree of a repo via the Git Trees API."""
     headers = _auth_headers()
 
     async with httpx.AsyncClient(timeout=10.0, follow_redirects=True) as client:
@@ -235,11 +294,7 @@ async def fetch_repo_file_tree(owner: str, repo: str, branch: str) -> list[dict]
 
 
 async def fetch_file_content(owner: str, repo: str, path: str, branch: str) -> Optional[str]:
-    """
-    Fetch and decode a single file's raw text content via the Contents API.
-    Returns None on any failure (binary file, too large, deleted, etc.) —
-    callers should skip files that return None rather than treat it as fatal.
-    """
+    """Fetch and decode a single file's raw text content via the Contents API."""
     headers = _auth_headers()
 
     async with httpx.AsyncClient(timeout=10.0, follow_redirects=True) as client:
@@ -258,7 +313,7 @@ async def fetch_file_content(owner: str, repo: str, path: str, branch: str) -> O
         data = resp.json()
 
         if isinstance(data, list):
-            return None  # path was a directory, not a file
+            return None
 
         content_b64 = data.get("content", "")
         if not content_b64:

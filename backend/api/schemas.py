@@ -1,5 +1,6 @@
 """
-Pydantic schemas for GitHub repository, AI feedback, and career analysis endpoints.
+Pydantic schemas for GitHub repository, AI feedback, career analysis,
+and authentication endpoints.
 """
 
 from typing import Optional
@@ -7,8 +8,6 @@ from pydantic import BaseModel, Field, field_validator
 
 
 class RepoAnalyzeRequest(BaseModel):
-    """Incoming request body: a GitHub repository URL (or owner/repo shorthand)."""
-
     repo_url: str = Field(
         ...,
         description="GitHub repository URL, e.g. https://github.com/owner/repo",
@@ -24,8 +23,6 @@ class RepoAnalyzeRequest(BaseModel):
 
 
 class RepoSummary(BaseModel):
-    """Lightweight repo info for the repo-list screen (not full detail)."""
-
     repo_name: str
     full_name: str
     description: Optional[str] = None
@@ -37,8 +34,6 @@ class RepoSummary(BaseModel):
 
 
 class RepoResponse(BaseModel):
-    """Structured repository information returned to the frontend."""
-
     repo_name: str
     full_name: str
     owner: str
@@ -65,13 +60,7 @@ class RepoResponse(BaseModel):
 
 
 class FeedbackRequest(BaseModel):
-    """Incoming request body for AI repository feedback."""
-
-    repo_url: str = Field(
-        ...,
-        description="GitHub repository URL to analyze",
-        examples=["https://github.com/owner/repo"],
-    )
+    repo_url: str = Field(..., description="GitHub repository URL to analyze")
 
     @field_validator("repo_url")
     @classmethod
@@ -82,8 +71,6 @@ class FeedbackRequest(BaseModel):
 
 
 class FeedbackResponse(BaseModel):
-    """AI-generated proactive feedback on a repository."""
-
     repo_purpose: str
     code_quality_estimate: str
     documentation_quality: str
@@ -95,8 +82,6 @@ class FeedbackResponse(BaseModel):
 
 
 class CareerAnalysisRequest(BaseModel):
-    """Incoming request body for whole-profile career analysis (Prompt 1)."""
-
     username: str = Field(..., description="GitHub username to analyze")
     career_goal: str = Field(..., description="e.g. 'Backend Engineer', 'ML Engineer'")
 
@@ -109,8 +94,6 @@ class CareerAnalysisRequest(BaseModel):
 
 
 class CareerAnalysisResponse(BaseModel):
-    """AI-generated career guidance based on a user's full GitHub profile."""
-
     strengths: list[str] = Field(default_factory=list)
     weaknesses: list[str] = Field(default_factory=list)
     missing_skills: list[str] = Field(default_factory=list)
@@ -119,8 +102,17 @@ class CareerAnalysisResponse(BaseModel):
     repos_analyzed: int
 
 
-class ErrorResponse(BaseModel):
-    """Consistent error shape returned to the frontend."""
+class UserResponse(BaseModel):
+    """Returned by /api/auth/me and after login."""
 
+    id: int
+    github_id: int
+    username: str
+    avatar_url: Optional[str] = None
+    bio: Optional[str] = None
+    career_goal: Optional[str] = None
+
+
+class ErrorResponse(BaseModel):
     error: str
     detail: Optional[str] = None
