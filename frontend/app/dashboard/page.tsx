@@ -22,6 +22,10 @@ import { Spinner } from "@/components/ui/Spinner";
 export default function DashboardPage() {
   const router = useRouter();
   const [user, setUser] = useState<CurrentUser | null>(null);
+
+  const [viewingUsername, setViewingUsername] = useState<string>("");
+  const [usernameInput, setUsernameInput] = useState<string>("");
+
   const [repos, setRepos] = useState<RepoSummary[]>([]);
   const [loadingRepos, setLoadingRepos] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -44,19 +48,56 @@ export default function DashboardPage() {
     fetchCurrentUser(token)
       .then((u) => {
         setUser(u);
-        return listUserRepos(u.username);
+        setViewingUsername(u.username);
+        setUsernameInput(u.username);
       })
-      .then((r) => setRepos(r))
-      .catch((err) => setError(err.message || "Something went wrong."))
-      .finally(() => setLoadingRepos(false));
+      .catch((err) => setError(err.message || "Something went wrong."));
   }, [router]);
 
-  async function handleAnalyze() {
+  useEffect(() => {
+    if (!viewingUsername) return;
+
+    setLoadingRepos(true);
+    setAnalysis(null);
+    setSelectedRepo(null);
+    setFeedback(null);
+    setError(null);
+    setRepos([]);
+
+    listUserRepos(viewingUsername)
+      .then((r) => setRepos(r))
+      .catch((err) => {
+        setRepos([]);
+        setError(err.message || "Could not load that profile's repos.");
+      })
+      .finally(() => setLoadingRepos(false));
+  }, [viewingUsername]);
+
+  function extractGithubUsername(input: string): string {
+    const trimmed = input.trim();
+    const match = trimmed.match(/github\.com\/([^\/\s?#]+)/i);
+    return match ? match[1] : trimmed;
+  }
+
+  function handleViewProfile() {
+    const username = extractGithubUsername(usernameInput);
+    if (!username) return;
+    setUsernameInput(username);
+    setViewingUsername(username);
+  }
+
+  function handleBackToMyProfile() {
     if (!user) return;
+    setUsernameInput(user.username);
+    setViewingUsername(user.username);
+  }
+
+  async function handleAnalyze() {
+    if (!viewingUsername) return;
     setAnalyzing(true);
     setAnalysis(null);
     try {
-      const result = await getCareerAnalysis(user.username, careerGoal);
+      const result = await getCareerAnalysis(viewingUsername, careerGoal);
       setAnalysis(result);
     } catch (err: any) {
       setError(err.message || "Analysis failed.");
@@ -92,6 +133,8 @@ export default function DashboardPage() {
     );
   }
 
+  const isOwnProfile = viewingUsername === user.username;
+
   return (
     <main className="min-h-screen bg-graphite">
       <header className="flex items-center justify-between border-b border-border px-8 py-4">
@@ -122,28 +165,60 @@ export default function DashboardPage() {
           </div>
         )}
 
-        <Card eyebrow="Step 1" title="What are you aiming to become?">
+        <Card eyebrow="Whose profile?" title="Look up any public GitHub profile">
           <div className="flex flex-wrap items-end gap-3">
             <div className="flex-1 min-w-[220px]">
               <label className="mb-1 block font-mono text-xs text-muted">
-                career goal
+                github username
               </label>
               <input
-                value={careerGoal}
-                onChange={(e) => setCareerGoal(e.target.value)}
-                placeholder="e.g. Backend Engineer, AI Engineer"
+                value={usernameInput}
+                onChange={(e) => setUsernameInput(e.target.value)}
+                onKeyDown={(e) => e.key === "Enter" && handleViewProfile()}
+                placeholder="e.g. a friend's github username"
                 className="focus-ring w-full rounded-md border border-border bg-surfaceRaised px-3 py-2 text-sm text-ink placeholder:text-muted"
               />
             </div>
-            <Button onClick={handleAnalyze} disabled={analyzing || !careerGoal.trim()}>
-              {analyzing ? "Reading your profile…" : "Analyze my profile"}
+            <Button onClick={handleViewProfile} disabled={!usernameInput.trim()}>
+              View profile
             </Button>
+            {!isOwnProfile && (
+              <Button variant="ghost" onClick={handleBackToMyProfile}>
+                Back to my profile
+              </Button>
+            )}
           </div>
+          <p className="mt-3 font-mono text-[11px] text-muted">
+            {isOwnProfile
+              ? "Currently viewing your own profile."
+              : `Currently viewing ${viewingUsername}'s public profile.`}
+          </p>
         </Card>
+
+        <div className="mt-6">
+          <Card eyebrow="Step 2" title={`What is ${isOwnProfile ? "your" : `${viewingUsername}'s`} target role?`}>
+            <div className="flex flex-wrap items-end gap-3">
+              <div className="flex-1 min-w-[220px]">
+                <label className="mb-1 block font-mono text-xs text-muted">
+                  career goal
+                </label>
+                <input
+                  value={careerGoal}
+                  onChange={(e) => setCareerGoal(e.target.value)}
+                  placeholder="e.g. Backend Engineer, AI Engineer"
+                  className="focus-ring w-full rounded-md border border-border bg-surfaceRaised px-3 py-2 text-sm text-ink placeholder:text-muted"
+                />
+              </div>
+              <Button onClick={handleAnalyze} disabled={analyzing || !careerGoal.trim()}>
+                {analyzing ? "Reading the profile…" : "Analyze this profile"}
+              </Button>
+            </div>
+          </Card>
+        </div>
 
         {analyzing && (
           <div className="mt-6">
-            <Spinner label="cross-referencing repos against your goal" />
+            <Spinner label="cross-referencing repos against the goal" />
           </div>
         )}
 
@@ -165,6 +240,9 @@ export default function DashboardPage() {
                 {repos.map((repo) => (
                   <RepoCard key={repo.full_name} repo={repo} onSelect={handleSelectRepo} />
                 ))}
+                {repos.length === 0 && !error && (
+                  <p className="text-sm text-muted">No public repositories found.</p>
+                )}
               </div>
             )}
           </div>
