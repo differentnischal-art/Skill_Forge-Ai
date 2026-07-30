@@ -46,6 +46,16 @@ def _request_origin(request: Request) -> str:
     return f"{scheme}://{host}"
 
 
+def _callback_log_fields(request_id: str, code: str, request: Request) -> dict:
+    return {
+        "request_id": request_id,
+        "code": code,
+        "code_length": len(code),
+        "request_url": str(request.url),
+        "referer": request.headers.get("referer"),
+    }
+
+
 @router.get("/github/login")
 async def github_login(request: Request):
     """Redirects the browser to GitHub's OAuth authorize page."""
@@ -91,22 +101,45 @@ async def github_callback(
     """
     request_id = str(uuid.uuid4())
     logger.info(
-        "github_callback entry request_id=%s request_url=%s code_length=%s",
-        request_id,
-        request.url,
-        len(code),
+        "github_callback entry %(request_id)s code=%(code)s code_length=%(code_length)s "
+        "request_url=%(request_url)s referer=%(referer)s",
+        _callback_log_fields(request_id, code, request),
     )
     try:
         redirect_uri = os.getenv(
             "GITHUB_OAUTH_REDIRECT_URI",
             f"{_request_origin(request)}/api/auth/github/callback",
         )
+        logger.info(
+            "github_callback before exchange_code_for_token %(request_id)s "
+            "code=%(code)s code_length=%(code_length)s request_url=%(request_url)s "
+            "referer=%(referer)s",
+            _callback_log_fields(request_id, code, request),
+        )
         github_access_token = await exchange_code_for_token(
             code,
             redirect_uri,
             request_id=request_id,
         )
+        logger.info(
+            "github_callback after exchange_code_for_token %(request_id)s "
+            "code=%(code)s code_length=%(code_length)s request_url=%(request_url)s "
+            "referer=%(referer)s",
+            _callback_log_fields(request_id, code, request),
+        )
+        logger.info(
+            "github_callback before fetch_authenticated_github_user %(request_id)s "
+            "code=%(code)s code_length=%(code_length)s request_url=%(request_url)s "
+            "referer=%(referer)s",
+            _callback_log_fields(request_id, code, request),
+        )
         github_user = await fetch_authenticated_github_user(github_access_token)
+        logger.info(
+            "github_callback after fetch_authenticated_github_user %(request_id)s "
+            "code=%(code)s code_length=%(code_length)s request_url=%(request_url)s "
+            "referer=%(referer)s",
+            _callback_log_fields(request_id, code, request),
+        )
 
         user = crud.create_or_update_user(
             db=db,
@@ -122,12 +155,27 @@ async def github_callback(
 
         frontend_url = os.getenv("FRONTEND_URL", _request_origin(request))
         redirect_url = f"{frontend_url}/auth/callback?token={jwt_token}"
+        logger.info(
+            "github_callback before RedirectResponse %(request_id)s code=%(code)s "
+            "code_length=%(code_length)s request_url=%(request_url)s referer=%(referer)s",
+            _callback_log_fields(request_id, code, request),
+        )
+        logger.info(
+            "github_callback before return %(request_id)s code=%(code)s "
+            "code_length=%(code_length)s request_url=%(request_url)s referer=%(referer)s",
+            _callback_log_fields(request_id, code, request),
+        )
         return RedirectResponse(
             url=redirect_url,
             status_code=status.HTTP_303_SEE_OTHER,
         )
 
     except GitHubServiceError as exc:
+        logger.info(
+            "github_callback before raise %(request_id)s code=%(code)s "
+            "code_length=%(code_length)s request_url=%(request_url)s referer=%(referer)s",
+            _callback_log_fields(request_id, code, request),
+        )
         raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
 
 
