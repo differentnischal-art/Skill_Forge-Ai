@@ -7,6 +7,7 @@ into a clean shape. Feature extraction / prompt-building comes later.
 """
 
 import base64
+import logging
 import os
 from typing import Optional
 
@@ -17,6 +18,7 @@ from utils.helpers import parse_github_url
 
 GITHUB_API_BASE = "https://api.github.com"
 GITHUB_OAUTH_BASE = "https://github.com/login/oauth"
+logger = logging.getLogger(__name__)
 
 
 class GitHubServiceError(Exception):
@@ -45,7 +47,17 @@ def _auth_headers(user_token: Optional[str] = None) -> dict[str, str]:
     return headers
 
 
-async def exchange_code_for_token(code: str, redirect_uri: str) -> str:
+def _mask_client_id(client_id: Optional[str]) -> str:
+    if not client_id:
+        return "<missing>"
+    return f"{client_id[:6]}{'*' * max(len(client_id) - 6, 0)}"
+
+
+async def exchange_code_for_token(
+    code: str,
+    redirect_uri: str,
+    request_id: Optional[str] = None,
+) -> str:
     """
     Exchanges a GitHub OAuth 'code' (from the callback redirect) for a
     real user access token.
@@ -60,8 +72,19 @@ async def exchange_code_for_token(code: str, redirect_uri: str) -> str:
         )
 
     async with httpx.AsyncClient(timeout=10.0) as client:
+        request_url = f"{GITHUB_OAUTH_BASE}/access_token"
+        logger.info(
+            "github access_token request request_id=%s request_url=%s redirect_uri=%s "
+            "client_id=%s client_secret_exists=%s code_length=%s",
+            request_id,
+            request_url,
+            redirect_uri,
+            _mask_client_id(client_id),
+            bool(client_secret),
+            len(code),
+        )
         resp = await client.post(
-            f"{GITHUB_OAUTH_BASE}/access_token",
+            request_url,
             headers={"Accept": "application/json"},
             data={
                 "client_id": client_id,
@@ -69,6 +92,19 @@ async def exchange_code_for_token(code: str, redirect_uri: str) -> str:
                 "code": code,
                 "redirect_uri": redirect_uri,
             },
+        )
+        raw_body = resp.text
+        try:
+            parsed_json = resp.json()
+        except ValueError as exc:
+            parsed_json = f"<invalid json: {exc}>"
+        logger.info(
+            "github access_token response request_id=%s status_code=%s raw_body=%s "
+            "parsed_json=%s",
+            request_id,
+            resp.status_code,
+            raw_body,
+            parsed_json,
         )
 
         if resp.status_code != 200:

@@ -10,6 +10,8 @@ Flow:
 """
 
 import os
+import logging
+import uuid
 from urllib.parse import urlencode
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
@@ -29,6 +31,7 @@ from services.github.github_api import (
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
 security = HTTPBearer()
+logger = logging.getLogger(__name__)
 
 
 def _request_origin(request: Request) -> str:
@@ -46,10 +49,17 @@ def _request_origin(request: Request) -> str:
 @router.get("/github/login")
 async def github_login(request: Request):
     """Redirects the browser to GitHub's OAuth authorize page."""
+    request_id = str(uuid.uuid4())
     client_id = os.getenv("GITHUB_CLIENT_ID")
     redirect_uri = os.getenv(
         "GITHUB_OAUTH_REDIRECT_URI",
         f"{_request_origin(request)}/api/auth/github/callback",
+    )
+    logger.info(
+        "github_login entry request_id=%s request_url=%s redirect_uri=%s",
+        request_id,
+        request.url,
+        redirect_uri,
     )
 
     if not client_id:
@@ -79,12 +89,23 @@ async def github_callback(
     Exchanges the code for a token, fetches the user's profile,
     saves/updates the User row, issues a JWT, and redirects to the frontend.
     """
+    request_id = str(uuid.uuid4())
+    logger.info(
+        "github_callback entry request_id=%s request_url=%s code_length=%s",
+        request_id,
+        request.url,
+        len(code),
+    )
     try:
         redirect_uri = os.getenv(
             "GITHUB_OAUTH_REDIRECT_URI",
             f"{_request_origin(request)}/api/auth/github/callback",
         )
-        github_access_token = await exchange_code_for_token(code, redirect_uri)
+        github_access_token = await exchange_code_for_token(
+            code,
+            redirect_uri,
+            request_id=request_id,
+        )
         github_user = await fetch_authenticated_github_user(github_access_token)
 
         user = crud.create_or_update_user(
