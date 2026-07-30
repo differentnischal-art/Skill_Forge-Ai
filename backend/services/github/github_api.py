@@ -45,7 +45,7 @@ def _auth_headers(user_token: Optional[str] = None) -> dict[str, str]:
     return headers
 
 
-async def exchange_code_for_token(code: str) -> str:
+async def exchange_code_for_token(code: str, redirect_uri: str) -> str:
     """
     Exchanges a GitHub OAuth 'code' (from the callback redirect) for a
     real user access token.
@@ -67,6 +67,7 @@ async def exchange_code_for_token(code: str) -> str:
                 "client_id": client_id,
                 "client_secret": client_secret,
                 "code": code,
+                "redirect_uri": redirect_uri,
             },
         )
 

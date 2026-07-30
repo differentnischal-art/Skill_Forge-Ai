@@ -77,7 +77,11 @@ async def github_callback(
     saves/updates the User row, issues a JWT, and redirects to the frontend.
     """
     try:
-        github_access_token = await exchange_code_for_token(code)
+        redirect_uri = os.getenv(
+            "GITHUB_OAUTH_REDIRECT_URI",
+            f"{_request_origin(request)}/api/auth/github/callback",
+        )
+        github_access_token = await exchange_code_for_token(code, redirect_uri)
         github_user = await fetch_authenticated_github_user(github_access_token)
 
         user = crud.create_or_update_user(
