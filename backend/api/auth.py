@@ -12,7 +12,7 @@ Flow:
 import os
 from urllib.parse import urlencode
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from fastapi.responses import RedirectResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy.orm import Session
@@ -64,7 +64,10 @@ async def github_login(request: Request):
         "scope": "read:user repo",
     }
     github_authorize_url = f"https://github.com/login/oauth/authorize?{urlencode(params)}"
-    return RedirectResponse(url=github_authorize_url)
+    return RedirectResponse(
+        url=github_authorize_url,
+        status_code=status.HTTP_303_SEE_OTHER,
+    )
 
 
 @router.get("/github/callback")
@@ -98,7 +101,10 @@ async def github_callback(
 
         frontend_url = os.getenv("FRONTEND_URL", _request_origin(request))
         redirect_url = f"{frontend_url}/auth/callback?token={jwt_token}"
-        return RedirectResponse(url=redirect_url)
+        return RedirectResponse(
+            url=redirect_url,
+            status_code=status.HTTP_303_SEE_OTHER,
+        )
 
     except GitHubServiceError as exc:
         raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
