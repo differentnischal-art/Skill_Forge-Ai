@@ -12,7 +12,7 @@ Flow:
 import os
 from urllib.parse import urlencode
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import RedirectResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy.orm import Session
@@ -31,16 +31,31 @@ router = APIRouter(prefix="/api/auth", tags=["auth"])
 security = HTTPBearer()
 
 
+def _request_origin(request: Request) -> str:
+    forwarded_proto = request.headers.get("x-forwarded-proto")
+    forwarded_host = request.headers.get("x-forwarded-host")
+
+    scheme = (forwarded_proto or request.url.scheme).split(",")[0].strip()
+    host = (
+        forwarded_host or request.headers.get("host") or request.url.netloc
+    ).split(",")[0].strip()
+
+    return f"{scheme}://{host}"
+
+
 @router.get("/github/login")
-async def github_login():
+async def github_login(request: Request):
     """Redirects the browser to GitHub's OAuth authorize page."""
     client_id = os.getenv("GITHUB_CLIENT_ID")
-    redirect_uri = os.getenv("GITHUB_OAUTH_REDIRECT_URI")
+    redirect_uri = os.getenv(
+        "GITHUB_OAUTH_REDIRECT_URI",
+        f"{_request_origin(request)}/api/auth/github/callback",
+    )
 
-    if not client_id or not redirect_uri:
+    if not client_id:
         raise HTTPException(
             status_code=500,
-            detail="GITHUB_CLIENT_ID or GITHUB_OAUTH_REDIRECT_URI not configured.",
+            detail="GITHUB_CLIENT_ID not configured.",
         )
 
     params = {
@@ -54,7 +69,7 @@ async def github_login():
 
 @router.get("/github/callback")
 async def github_callback(
-    code: str = Query(...), db: Session = Depends(get_db)
+    request: Request, code: str = Query(...), db: Session = Depends(get_db)
 ):
     """
     Handles GitHub's redirect back after the user approves login.
@@ -77,7 +92,7 @@ async def github_callback(
             user_id=user.id, github_id=user.github_id, username=user.username
         )
 
-        frontend_url = os.getenv("FRONTEND_URL", "http://localhost:3000")
+        frontend_url = os.getenv("FRONTEND_URL", _request_origin(request))
         redirect_url = f"{frontend_url}/auth/callback?token={jwt_token}"
         return RedirectResponse(url=redirect_url)
 
