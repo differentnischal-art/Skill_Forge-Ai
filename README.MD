@@ -1,4 +1,4 @@
-# 🚀 SkillForge AI
+# 🚀 Student n fun!!
 
 > **Stop asking "How many commits have I made?"**
 >
