@@ -190,6 +190,8 @@ APP_ENV=local
 GITHUB_CLIENT_ID=YOUR_CLIENT_ID
 GITHUB_CLIENT_SECRET=YOUR_CLIENT_SECRET
 
+just go to settings in developer mode and modigy it..
+below is some of the example..
 GITHUB_OAUTH_REDIRECT_URI=http://localhost:8000/api/auth/github/callback
 
 FRONTEND_URL=http://localhost:3000
